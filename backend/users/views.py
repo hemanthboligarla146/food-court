@@ -4,6 +4,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from .serializers import UserSerializer, UserRegistrationSerializer, AddressSerializer, PaymentMethodSerializer
 from analytics.services import track_event
+from analytics.posthog_sdk import posthog_client
 from django.contrib.auth import get_user_model
 from .models import Address, PaymentMethod
 
@@ -23,7 +24,16 @@ class RegisterView(APIView):
                 event_type='REGISTER',
                 ip_address=request.META.get('REMOTE_ADDR')
             )
-            
+
+            if posthog_client:
+                with posthog_client.new_context():
+                    posthog_client.identify_context(str(user.id))
+                    posthog_client.tag('email', user.email)
+                    posthog_client.tag('username', user.username)
+                    posthog_client.capture('user_registered', properties={
+                        'has_email': bool(user.email),
+                    })
+
             refresh = RefreshToken.for_user(user)
             return Response({
                 'user': UserSerializer(user).data,
@@ -61,6 +71,15 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 event_type='LOGIN',
                 ip_address=request.META.get('REMOTE_ADDR')
             )
+            if posthog_client:
+                with posthog_client.new_context():
+                    posthog_client.identify_context(str(user.id))
+                    posthog_client.tag('email', user.email)
+                    posthog_client.tag('username', user.username)
+                    posthog_client.tag('is_staff', user.is_staff)
+                    posthog_client.capture('user_logged_in', properties={
+                        'login_method': 'email',
+                    })
         return response
 
 class AddressViewSet(viewsets.ModelViewSet):

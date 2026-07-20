@@ -3,6 +3,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from .models import Category, Food, Review
 from .serializers import CategorySerializer, FoodSerializer, ReviewSerializer
 from analytics.services import track_event
+from analytics.posthog_sdk import posthog_client
 
 class CategoryList(generics.ListAPIView):
     queryset = Category.objects.all()
@@ -30,6 +31,13 @@ class FoodList(generics.ListAPIView):
                 search_keyword=search_query,
                 ip_address=self.request.META.get('REMOTE_ADDR')
             )
+            if posthog_client:
+                distinct_id = str(user.id) if user else 'anonymous'
+                with posthog_client.new_context():
+                    posthog_client.identify_context(distinct_id)
+                    posthog_client.capture('food_searched', properties={
+                        'keyword_length': len(search_query),
+                    })
         return queryset
 
 class FoodDetail(generics.RetrieveAPIView):
@@ -48,6 +56,16 @@ class FoodDetail(generics.RetrieveAPIView):
             category=obj.category,
             ip_address=self.request.META.get('REMOTE_ADDR')
         )
+        if posthog_client:
+            distinct_id = str(user.id) if user else 'anonymous'
+            with posthog_client.new_context():
+                posthog_client.identify_context(distinct_id)
+                posthog_client.capture('food_viewed', properties={
+                    'food_id': obj.id,
+                    'category_id': obj.category_id,
+                    'is_featured': obj.is_featured,
+                    'is_trending': obj.is_trending,
+                })
         return obj
 
 class FoodReview(generics.CreateAPIView):
@@ -58,8 +76,8 @@ class FoodReview(generics.CreateAPIView):
     def perform_create(self, serializer):
         food_id = self.kwargs.get('pk')
         food = Food.objects.get(pk=food_id)
-        serializer.save(user=self.request.user, food=food)
-        
+        review = serializer.save(user=self.request.user, food=food)
+
         track_event(
             user=self.request.user,
             event_type='REVIEW',
@@ -67,6 +85,14 @@ class FoodReview(generics.CreateAPIView):
             category=food.category,
             ip_address=self.request.META.get('REMOTE_ADDR')
         )
+        if posthog_client:
+            with posthog_client.new_context():
+                posthog_client.identify_context(str(self.request.user.id))
+                posthog_client.capture('food_review_submitted', properties={
+                    'food_id': food.id,
+                    'category_id': food.category_id,
+                    'rating': review.rating,
+                })
 
 class AdminCategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
