@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from .models import Order, OrderItem, Cart, Wishlist
 from .serializers import OrderSerializer, CartSerializer, WishlistSerializer, AdminOrderSerializer
 from analytics.services import track_event
+from analytics.posthog_sdk import posthog_client
 from foods.models import Review
 from rest_framework.views import APIView
 
@@ -25,6 +26,15 @@ class CartListCreateView(generics.ListCreateAPIView):
             category=food.category,
             ip_address=self.request.META.get('REMOTE_ADDR')
         )
+        if posthog_client:
+            with posthog_client.new_context():
+                posthog_client.identify_context(str(self.request.user.id))
+                posthog_client.capture('item_added_to_cart', properties={
+                    'food_id': food.id,
+                    'category_id': food.category_id,
+                    'size': cart_item.size,
+                    'quantity': cart_item.quantity,
+                })
 
 class CartDeleteView(generics.DestroyAPIView):
     serializer_class = CartSerializer
@@ -44,6 +54,13 @@ class CartDeleteView(generics.DestroyAPIView):
             category=food.category if food else None,
             ip_address=self.request.META.get('REMOTE_ADDR')
         )
+        if posthog_client:
+            with posthog_client.new_context():
+                posthog_client.identify_context(str(self.request.user.id))
+                posthog_client.capture('item_removed_from_cart', properties={
+                    'food_id': food.id if food else None,
+                    'category_id': food.category_id if food else None,
+                })
 
 class OrderListCreateView(generics.ListCreateAPIView):
     serializer_class = OrderSerializer
@@ -90,7 +107,16 @@ class OrderListCreateView(generics.ListCreateAPIView):
             event_type='ORDER',
             ip_address=request.META.get('REMOTE_ADDR')
         )
-        
+        if posthog_client:
+            with posthog_client.new_context():
+                posthog_client.identify_context(str(request.user.id))
+                posthog_client.capture('order_placed', properties={
+                    'item_count': len(list(order.items.all())),
+                    'total_amount': float(total_amount),
+                    'has_delivery_fee': float(delivery_fee) > 0,
+                    'has_discount': float(discount) > 0,
+                })
+
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 class OrderDetailView(generics.RetrieveAPIView):
@@ -170,7 +196,16 @@ class OrderReviewView(APIView):
                     category=food.category,
                     ip_address=request.META.get('REMOTE_ADDR')
                 )
-                
+
+        if posthog_client and reviews_created > 0:
+            with posthog_client.new_context():
+                posthog_client.identify_context(str(request.user.id))
+                posthog_client.capture('order_reviewed', properties={
+                    'order_id': order.id,
+                    'items_reviewed': reviews_created,
+                    'rating': int(rating),
+                })
+
         if reviews_created > 0:
             order.is_reviewed = True
             order.save()
