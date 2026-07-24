@@ -1,11 +1,21 @@
 from rest_framework import serializers
+from .models import AnalyticsEvent
 
-class AnalyticsEventSerializer(serializers.Serializer):
-    event_type = serializers.CharField(max_length=50)
-    food_id = serializers.IntegerField(required=False, allow_null=True)
-    category_id = serializers.IntegerField(required=False, allow_null=True)
-    search_keyword = serializers.CharField(max_length=200, required=False, allow_null=True, allow_blank=True)
-    page_path = serializers.CharField(max_length=255, required=False, allow_null=True, allow_blank=True)
-    device_type = serializers.CharField(max_length=20, required=False, default='Unknown')
-    session_id = serializers.CharField(max_length=100, required=False, allow_null=True)
-    metadata = serializers.JSONField(required=False, default=dict)
+
+class EventTrackSerializer(serializers.Serializer):
+    session_key   = serializers.CharField(max_length=64)
+    event_type    = serializers.ChoiceField(choices=AnalyticsEvent.EVENT_CHOICES)
+    page_path     = serializers.CharField(max_length=255, required=False, allow_blank=True, default='')
+    food_id       = serializers.IntegerField(required=False, allow_null=True, default=None)
+    category_id   = serializers.IntegerField(required=False, allow_null=True, default=None)
+    search_term   = serializers.CharField(max_length=255, required=False, allow_blank=True, default='')
+    time_on_page  = serializers.IntegerField(required=False, allow_null=True, default=None)
+    extra         = serializers.JSONField(required=False, default=dict)
+
+
+class SessionStartSerializer(serializers.Serializer):
+    session_key   = serializers.CharField(max_length=64)
+
+
+class SessionMergeSerializer(serializers.Serializer):
+    session_key   = serializers.CharField(max_length=64)

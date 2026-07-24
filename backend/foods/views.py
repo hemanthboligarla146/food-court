@@ -2,7 +2,6 @@ from rest_framework import generics, permissions, filters, viewsets
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import Category, Food, Review
 from .serializers import CategorySerializer, FoodSerializer, ReviewSerializer
-from analytics.services import track_event
 
 class CategoryList(generics.ListAPIView):
     queryset = Category.objects.all()
@@ -24,12 +23,7 @@ class FoodList(generics.ListAPIView):
         search_query = self.request.query_params.get('search', None)
         if search_query:
             user = self.request.user if self.request.user.is_authenticated else None
-            track_event(
-                user=user,
-                event_type='SEARCH',
-                search_keyword=search_query,
-                ip_address=self.request.META.get('REMOTE_ADDR')
-            )
+            # Search is tracked in frontend
         return queryset
 
 class FoodDetail(generics.RetrieveAPIView):
@@ -41,13 +35,7 @@ class FoodDetail(generics.RetrieveAPIView):
         obj = super().get_object()
         # Log food view analytics
         user = self.request.user if self.request.user.is_authenticated else None
-        track_event(
-            user=user,
-            event_type='FOOD_VIEW',
-            food=obj,
-            category=obj.category,
-            ip_address=self.request.META.get('REMOTE_ADDR')
-        )
+        # Food view tracked in frontend
         return obj
 
 class FoodReview(generics.CreateAPIView):
@@ -60,13 +48,7 @@ class FoodReview(generics.CreateAPIView):
         food = Food.objects.get(pk=food_id)
         serializer.save(user=self.request.user, food=food)
         
-        track_event(
-            user=self.request.user,
-            event_type='REVIEW',
-            food=food,
-            category=food.category,
-            ip_address=self.request.META.get('REMOTE_ADDR')
-        )
+        # Review tracked in frontend
 
 class AdminCategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()

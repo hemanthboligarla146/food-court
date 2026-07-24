@@ -4,8 +4,10 @@ import { FiTrash2, FiArrowLeft } from 'react-icons/fi';
 import { useDispatch } from 'react-redux';
 import { decrementCartCount } from '../store/cartSlice';
 import api from '../api/axios';
+import { useTracker } from '../hooks/useTracker';
 
 const Cart = () => {
+  const { trackEvent } = useTracker();
   const [cartItems, setCartItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
@@ -13,6 +15,7 @@ const Cart = () => {
 
   useEffect(() => {
     fetchCart();
+    trackEvent('cart_view');
   }, []);
 
   const fetchCart = async () => {

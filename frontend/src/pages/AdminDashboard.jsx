@@ -21,8 +21,6 @@ import {
   FiEdit2, FiTrash2, FiPlus, FiImage, FiX
 } from 'react-icons/fi';
 import { logout } from '../store/authSlice';
-import { useDashboardStats } from '../hooks/useDashboardStats';
-import { useRealtimeAnalytics } from '../hooks/useRealtimeAnalytics';
 
 ChartJS.register(
   CategoryScale,
@@ -82,8 +80,34 @@ const AdminDashboard = () => {
     }
   }, [user, navigate]);
 
-  const { data, loading, error, refetch: fetchAnalytics } = useDashboardStats(analyticsPeriod);
-  const realtimeData = useRealtimeAnalytics(analyticsPeriod, 15000);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const fetchAnalytics = async (silent = false) => {
+    if (!silent) setLoading(true);
+    try {
+      const response = await api.get(`analytics/dashboard/?period=${analyticsPeriod}`);
+      setData(response.data);
+      setError(null);
+    } catch (err) {
+      console.error('Failed to fetch dashboard stats', err);
+      setError(err);
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAnalytics();
+    
+    // Auto-refresh every 30 seconds as requested (Phase 9/Auto-refresh)
+    const interval = setInterval(() => {
+      fetchAnalytics(true);
+    }, 30000);
+    
+    return () => clearInterval(interval);
+  }, [analyticsPeriod]);
 
   useEffect(() => {
     if (activeTab === 'orders') fetchOrders();
@@ -138,7 +162,10 @@ const AdminDashboard = () => {
       }
       setShowCategoryModal(false);
       fetchCatalog();
-    } catch (err) { alert('Failed to save category'); }
+    } catch (err) { 
+      const msg = err.response?.data ? Object.values(err.response.data).flat().join(', ') : err.message;
+      alert(`Failed to save category: ${msg}`); 
+    }
   };
 
   const handleDeleteCategory = async (id) => {
@@ -146,7 +173,10 @@ const AdminDashboard = () => {
     try {
       await api.delete(`foods/admin/manage/categories/${id}/`);
       fetchCatalog();
-    } catch (err) { alert('Failed to delete category'); }
+    } catch (err) { 
+      const msg = err.response?.data ? Object.values(err.response.data).flat().join(', ') : err.message;
+      alert(`Failed to delete category: ${msg}`); 
+    }
   };
 
   const handleSaveFood = async (e) => {
@@ -163,7 +193,10 @@ const AdminDashboard = () => {
       }
       setShowFoodModal(false);
       fetchCatalog();
-    } catch (err) { alert('Failed to save food'); }
+    } catch (err) { 
+      const msg = err.response?.data ? Object.values(err.response.data).flat().join(', ') : err.message;
+      alert(`Failed to save food: ${msg}`); 
+    }
   };
 
   const handleDeleteFood = async (id) => {
@@ -171,7 +204,10 @@ const AdminDashboard = () => {
     try {
       await api.delete(`foods/admin/manage/foods/${id}/`);
       fetchCatalog();
-    } catch (err) { alert('Failed to delete food'); }
+    } catch (err) { 
+      const msg = err.response?.data ? Object.values(err.response.data).flat().join(', ') : err.message;
+      alert(`Failed to delete food: ${msg}`); 
+    }
   };
 
   const handleLogout = () => {
@@ -246,11 +282,11 @@ const AdminDashboard = () => {
               {/* Row 1: Top Metrics */}
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
                 <MetricCard icon={<FiUsers className="text-blue-500" />} title="Total Users" value={data.users?.total || 0} change="+18.7%" />
-                <MetricCard icon={<FiFileText className="text-green-500" />} title="Menu Page Visits" value={data.menu_analytics?.total_visits || 0} change="+24.3%" />
+                <MetricCard icon={<FiUsers className="text-green-500" />} title="New Users" value={data.users?.today || 0} change="+24.3%" />
+                <MetricCard icon={<FiUsers className="text-purple-500" />} title="Returning Users" value={data.users?.returning || 0} change="+16.4%" />
                 <MetricCard icon={<FiShoppingBag className="text-blue-400" />} title="Total Orders" value={data.orders?.total || 0} change="+15.3%" />
                 <MetricCard icon={<FiList className="text-green-500" />} title="Completed Orders" value={data.orders?.completed || 0} change="+16.8%" />
                 <MetricCard icon={<FiPieChart className="text-yellow-500" />} title="Total Revenue" value={`$${data.orders?.revenue || 0}`} change="+25.8%" />
-                <MetricCard icon={<FiGrid className="text-purple-500" />} title="Total Searches" value={data.searches?.total || 0} change="+16.4%" />
               </div>
 
               {/* Row 2: Funnel, Page Visits, Menu Analytics */}
@@ -420,7 +456,7 @@ const AdminDashboard = () => {
                       <div key={i} className="flex justify-between items-center text-sm">
                         <span className="text-gray-600 capitalize w-16 truncate">{s.search_keyword}</span>
                         <div className="flex-1 mx-2 h-2 bg-gray-100 rounded-full overflow-hidden">
-                          <div className="h-full bg-purple-500 rounded-full" style={{ width: `${Math.min(100, (s.count/(data.searches.total||1))*100)}%` }}></div>
+                          <div className="h-full bg-purple-500 rounded-full" style={{ width: `${Math.min(100, (s.count/(data.searches?.total||1))*100)}%` }}></div>
                         </div>
                         <span className="font-bold text-[#1B2559] w-8 text-right">{s.count}</span>
                       </div>

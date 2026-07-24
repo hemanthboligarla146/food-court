@@ -4,9 +4,10 @@ import { useSelector, useDispatch } from 'react-redux';
 import api from '../api/axios';
 import { incrementCartCount } from '../store/cartSlice';
 import { FiArrowLeft, FiHeart, FiStar, FiTruck, FiShield, FiThumbsUp, FiBox } from 'react-icons/fi';
-
+import { useTracker } from '../hooks/useTracker';
 
 const FoodDetails = () => {
+  const { trackEvent } = useTracker();
   const { id } = useParams();
   const navigate = useNavigate();
   const { isAuthenticated } = useSelector(state => state.auth);
@@ -25,6 +26,7 @@ const FoodDetails = () => {
       try {
         const response = await api.get(`foods/menu/${id}/`);
         setFood(response.data);
+        trackEvent('food_view', { foodId: response.data.id });
 
         if (isAuthenticated) {
           const wlRes = await api.get('orders/wishlist/');
@@ -57,6 +59,7 @@ const FoodDetails = () => {
         size: selectedSize
       });
       dispatch(incrementCartCount(quantity));
+      trackEvent('add_to_cart', { foodId: food.id });
       // Toast notification could go here
     } catch (error) {
       console.error('Error adding to cart:', error);

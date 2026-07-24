@@ -1,298 +1,377 @@
-from django.db.models import Count, Sum, Q, F, Max, Min
-from django.db.models.functions import ExtractHour, ExtractWeekDay
+from django.db.models import Count, Sum, Q, Avg
+from django.db.models.functions import ExtractHour, ExtractWeekDay, TruncDate
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from datetime import timedelta
-import calendar
-import difflib
-from collections import Counter
 
-from orders.models import Order
+from orders.models import Order, OrderItem
 from foods.models import Food, Category
-from .models import AnalyticsEvent
-from .posthog_client import fetch_posthog_funnel, fetch_posthog_pageviews
-from .utils import filter_by_period, cap_funnel_stages, get_period_dates
+from .models import AnalyticsSession, AnalyticsEvent
+from .utils import filter_by_period, get_period_dates
 
 User = get_user_model()
 
+
 def get_dashboard_stats(period='daily'):
-    """
-    Core selector to fetch and aggregate all dashboard metrics.
-    """
     now = timezone.now()
-    today = now.date()
-    
     start_date, current_start, prev_start = get_period_dates(period)
-    
-    # 1. Users KPIs
-    current_joined_qs = filter_by_period(User.objects.all(), 'date_joined', period, True)
-    new_users = current_joined_qs.count()
-    active_users_qs = filter_by_period(AnalyticsEvent.objects.filter(event_type__in=['LOGIN', 'VISIT']).exclude(user=None), 'created_at', period, True).values_list('user', flat=True)
-    
-    active_events_users = set(active_users_qs)
-    new_users_list = set(current_joined_qs.values_list('id', flat=True))
-    active_users = len(active_events_users.union(new_users_list))
-    
-    total_users = User.objects.count()
-    today_users = new_users
-    returning_users = max(0, active_users - new_users)
-    
-    # 2. Orders KPIs
-    current_orders_qs = filter_by_period(Order.objects.all(), 'created_at', period, True)
-    prev_orders_qs = filter_by_period(Order.objects.all(), 'created_at', period, False)
-    
-    completed_orders = current_orders_qs.filter(status='Completed').count()
-    cancelled_orders = current_orders_qs.filter(status='Cancelled').count()
-    pending_orders = current_orders_qs.filter(status__in=['Pending', 'Processing', 'Out for Delivery']).count()
-    
-    # Strictly enforce: Completed + Cancelled + Pending = Total Orders
-    total_orders = completed_orders + cancelled_orders + pending_orders
-    today_orders = total_orders - prev_orders_qs.count()
-    
-    # Strictly enforce: Revenue = Sum(Completed Orders)
-    revenue = current_orders_qs.filter(status='Completed').aggregate(Sum('total_amount'))['total_amount__sum'] or 0
-    avg_order_val = float(revenue / completed_orders) if completed_orders > 0 else 0.0
 
-    # 3. Visits
-    total_visits = filter_by_period(AnalyticsEvent.objects.filter(event_type='VISIT'), 'created_at', period, True).count()
-    prev_visits = filter_by_period(AnalyticsEvent.objects.filter(event_type='VISIT'), 'created_at', period, False).count()
-    today_visits = total_visits - prev_visits
+    # ------------------------------------------------------------------
+    # 1. USER METRICS (PostgreSQL)
+    # ------------------------------------------------------------------
+    # Total customers registered overall (excluding admins/staff)
+    total_users = User.objects.filter(is_staff=False, is_superuser=False).count()
     
-    # 4. Search Analytics
-    current_searches_qs = filter_by_period(AnalyticsEvent.objects.filter(event_type='SEARCH'), 'created_at', period, True)
-    total_searches = current_searches_qs.count()
-    
-    search_ips = current_searches_qs.values_list('ip_address', flat=True).distinct()
-    successful_searches = filter_by_period(AnalyticsEvent.objects.filter(event_type='ORDER', ip_address__in=search_ips), 'created_at', period, True).values('ip_address').distinct().count()
-    no_result_searches = current_searches_qs.filter(metadata__result_count=0).count() # Dynamic now via metadata
-    conversion = round((successful_searches / total_searches) * 100, 1) if total_searches > 0 else 0
-    
-    # Group searches fuzzy
-    raw_keywords = list(current_searches_qs.values_list('search_keyword', flat=True))
-    keyword_counts = Counter([k.lower().strip() for k in raw_keywords if k])
-    grouped_counts = {}
-    for kw, count in keyword_counts.items():
-        matched = False
-        for master_kw in grouped_counts.keys():
-            if difflib.SequenceMatcher(None, kw, master_kw).ratio() > 0.75:
-                grouped_counts[master_kw] += count
-                matched = True
-                break
-        if not matched:
-            grouped_counts[kw] = count
-            
-    sorted_searches = [{'search_keyword': k.title(), 'count': v} for k, v in sorted(grouped_counts.items(), key=lambda item: item[1], reverse=True)]
-    top_searches = sorted_searches[:5]
-    top_search_keyword = top_searches[0]['search_keyword'] if top_searches else 'N/A'
+    # New users registered in this period
+    new_users_qs = filter_by_period(User.objects.filter(is_staff=False, is_superuser=False), 'date_joined', period, True)
+    new_users = new_users_qs.count()
 
-    # 5. Funnel Analysis (PostHog Integration)
-    date_from = '-1d' if period == 'daily' else '-7d' if period == 'weekly' else '-30d' if period == 'monthly' else '-365d'
-    ph_funnel = fetch_posthog_funnel(date_from)
-    
-    # Fallback structure if PostHog keys are missing
-    capped_funnel = [0] * 11
-    
-    if ph_funnel and 'results' in ph_funnel:
-        # Extract from PostHog response
-        capped_funnel = [step['count'] for step in ph_funnel['results']] + [completed_orders]*7 # padding
-    
-    funnel_labels = ['Website Visitors', 'Logged In Users', 'Home Page Viewed', 'Menu Page Viewed', 'Category Viewed', 
-                     'Food Item Viewed', 'Food Item Clicked', 'Added to Cart', 'Checkout', 'Payment Success', 'Completed Orders']
-    
-    funnel_data = []
-    base_users = capped_funnel[0] if capped_funnel else 1
-    for i, label in enumerate(funnel_labels):
-        users = capped_funnel[i] if i < len(capped_funnel) else 0
-        conversion_pct = round((users / max(base_users, 1)) * 100, 1)
-        funnel_data.append({'step': label, 'users': users, 'conversion': conversion_pct})
-
-    # 6. Page Visits (With Avg Time and Bounce using session grouped data)
-    page_names = [
-        ('Home Page', '/'), ('Menu Page', '/menu'), ('Category Page', '/menu?category'),
-        ('Food Details Page', '/food'), ('Search Page', '/search'), ('Cart Page', '/cart'),
-        ('Checkout Page', '/checkout'), ('Profile Page', '/profile'), ('Orders Page', '/orders'),
-    ]
-    page_visits_chart = []
-    
-    # Pre-calculate session durations globally to estimate avg time
-    funnel_events = filter_by_period(AnalyticsEvent.objects.all(), 'created_at', period, True)
-    sessions = funnel_events.exclude(session_id=None).values('session_id').annotate(
-        start=Min('created_at'), end=Max('created_at'), count=Count('id')
+    # Returning Users: Logged-in users who have more than 1 session overall and were active in this period
+    returning_users = (
+        AnalyticsSession.objects
+        .filter(started_at__gte=current_start, user__isnull=False)
+        .values('user')
+        .annotate(session_count=Count('id'))
+        .filter(session_count__gt=1)
+        .count()
     )
-    total_session_time = sum((s['end'] - s['start']).total_seconds() for s in sessions if s['end'] > s['start'])
-    total_sessions = sessions.count() or 1
-    avg_session_time_global = int(total_session_time / total_sessions)
-    
-    for name, path in page_names:
-        if name == 'Food Details Page':
-            qs = funnel_events.filter(event_type__in=['FOOD_VIEW', 'FOOD_CLICK'])
-        elif name == 'Search Page':
-            qs = funnel_events.filter(event_type='SEARCH')
-        elif name == 'Home Page':
-            qs = funnel_events.filter(event_type='VISIT', page_path='/')
-        else:
-            qs = funnel_events.filter(event_type='VISIT', page_path__icontains=path)
-        
-        visits = qs.count()
-        page_visits_chart.append({'page': name, 'visits': visits, 'avg_time': avg_session_time_global if visits > 0 else 0})
-        
-    page_visits_chart.sort(key=lambda x: x['visits'], reverse=True)
 
-    # 7. Menu Analytics
-    total_menu_visits = funnel_events.filter(event_type='VISIT', page_path__icontains='/menu').count()
-    cats_opened = funnel_events.filter(event_type='FOOD_VIEW', category__isnull=False).count()
-    items_viewed = funnel_events.filter(event_type='FOOD_VIEW', food__isnull=False).count()
-    items_clicked = funnel_events.filter(event_type='FOOD_CLICK', food__isnull=False).count()
-    
-    max_menu_visits = max(total_menu_visits, capped_funnel[3]) # capped_funnel[3] is menu_viewed
-    
+    # ------------------------------------------------------------------
+    # 2. ORDER METRICS (PostgreSQL)
+    # ------------------------------------------------------------------
+    current_orders_qs = filter_by_period(Order.objects.all(), 'created_at', period, True)
+
+    completed_orders  = current_orders_qs.filter(status='Completed').count()
+    cancelled_orders  = current_orders_qs.filter(status='Cancelled').count()
+    processing_orders = current_orders_qs.filter(status='Processing').count()
+    pending_orders    = current_orders_qs.filter(status='Pending').count()
+    total_orders      = current_orders_qs.count()
+
+    # Enforce Completed + Pending + Cancelled + Processing = Total Orders
+    # If there's any discrepancy, adjust total
+    total_orders = completed_orders + pending_orders + cancelled_orders + processing_orders
+
+    # Revenue: sum of Completed orders
+    revenue = current_orders_qs.filter(status='Completed').aggregate(
+        s=Sum('total_amount')
+    )['s'] or 0.0
+
+    # ------------------------------------------------------------------
+    # 3. WEBSITE VISITORS (Unique Sessions in period)
+    # ------------------------------------------------------------------
+    visitors = AnalyticsSession.objects.filter(started_at__gte=current_start).count()
+
+    # ------------------------------------------------------------------
+    # 4. FUNNEL ANALYSIS (Naturally Decreasing Step Count)
+    # ------------------------------------------------------------------
+    # Funnel Definition:
+    # 1. Website Visitor (session_start)
+    # 2. Login (user_login)
+    # 3. Home (page_view with path='/')
+    # 4. Menu (menu_visit / page_view with path='/menu')
+    # 5. Category (category_click)
+    # 6. Food Details (food_view)
+    # 7. Add To Cart (add_to_cart)
+    # 8. Checkout (checkout_start)
+    # 9. Payment (payment_success / payment_attempt)
+    # 10. Completed Order (Postgres orders)
+
+    ev_qs = AnalyticsEvent.objects.filter(created_at__gte=current_start)
+
+    # Step 1: Website Visitor
+    f1_visitors = AnalyticsSession.objects.filter(started_at__gte=current_start).count()
+    # Step 2: Login
+    f2_logins = ev_qs.filter(event_type=AnalyticsEvent.EV_USER_LOGIN).values('session_id').distinct().count()
+    # Step 3: Home
+    f3_homes = ev_qs.filter(event_type=AnalyticsEvent.EV_PAGE_VIEW, page_path='/').values('session_id').distinct().count()
+    # Step 4: Menu
+    f4_menus = ev_qs.filter(Q(event_type=AnalyticsEvent.EV_MENU_VISIT) | Q(event_type=AnalyticsEvent.EV_PAGE_VIEW, page_path='/menu')).values('session_id').distinct().count()
+    # Step 5: Category
+    f5_cats = ev_qs.filter(event_type=AnalyticsEvent.EV_CATEGORY_CLICK).values('session_id').distinct().count()
+    # Step 6: Food Details
+    f6_details = ev_qs.filter(event_type=AnalyticsEvent.EV_FOOD_VIEW).values('session_id').distinct().count()
+    # Step 7: Add to Cart
+    f7_adds = ev_qs.filter(event_type=AnalyticsEvent.EV_ADD_TO_CART).values('session_id').distinct().count()
+    # Step 8: Checkout
+    f8_checkouts = ev_qs.filter(event_type=AnalyticsEvent.EV_CHECKOUT_START).values('session_id').distinct().count()
+    # Step 9: Payment
+    f9_payments = ev_qs.filter(Q(event_type=AnalyticsEvent.EV_PAYMENT_ATTEMPT) | Q(event_type=AnalyticsEvent.EV_PAYMENT_SUCCESS)).values('session_id').distinct().count()
+    # Step 10: Completed Order
+    f10_completed = completed_orders
+
+    # Force Natural Decrease: Step(N+1) <= Step(N)
+    f1 = f1_visitors
+    f2 = min(f2_logins, f1)
+    f3 = min(f3_homes, f2)
+    f4 = min(f4_menus, f3)
+    f5 = min(f5_cats, f4)
+    f6 = min(f6_details, f5)
+    f7 = min(f7_adds, f6)
+    f8 = min(f8_checkouts, f7)
+    f9 = min(f9_payments, f8)
+    f10 = min(f10_completed, f9)
+
+    def pct(val, base):
+        return round((val / base * 100) if base > 0 else 0.0, 1)
+
+    funnel_data = [
+        {'step': 'Website Visitor', 'users': f1, 'conversion': 100.0},
+        {'step': 'Login',           'users': f2, 'conversion': pct(f2, f1)},
+        {'step': 'Home',            'users': f3, 'conversion': pct(f3, f1)},
+        {'step': 'Menu',            'users': f4, 'conversion': pct(f4, f1)},
+        {'step': 'Category',        'users': f5, 'conversion': pct(f5, f1)},
+        {'step': 'Food Details',    'users': f6, 'conversion': pct(f6, f1)},
+        {'step': 'Add To Cart',     'users': f7, 'conversion': pct(f7, f1)},
+        {'step': 'Checkout',        'users': f8, 'conversion': pct(f8, f1)},
+        {'step': 'Payment',         'users': f9, 'conversion': pct(f9, f1)},
+        {'step': 'Completed Order', 'users': f10, 'conversion': pct(f10, f1)},
+    ]
+
+    # ------------------------------------------------------------------
+    # 5. PAGE ANALYTICS
+    # ------------------------------------------------------------------
+    # Views, Unique Visitors, Avg Time, Bounce Rate
+    page_events = ev_qs.filter(event_type=AnalyticsEvent.EV_PAGE_VIEW)
+    page_stats_raw = (
+        page_events
+        .values('page_path')
+        .annotate(
+            visits=Count('id'),
+            unique_visitors=Count('session_id', distinct=True),
+            avg_time=Avg('time_on_page')
+        )
+        .order_by('-visits')
+    )
+
+    page_visits_chart = []
+    for p in page_stats_raw:
+        path = p['page_path'] or '/'
+        # Calculate bounce rate: sessions that viewed ONLY this page / total sessions that viewed this page
+        # For simplicity, calculate bounce sessions: sessions where event count is 1
+        bounce_rate = 0.0
+        sessions_on_page = page_events.filter(page_path=path).values_list('session_id', flat=True)
+        if sessions_on_page:
+            single_page_sessions = (
+                AnalyticsEvent.objects
+                .filter(session_id__in=sessions_on_page)
+                .values('session_id')
+                .annotate(cnt=Count('id'))
+                .filter(cnt=1)
+                .count()
+            )
+            bounce_rate = pct(single_page_sessions, len(set(sessions_on_page)))
+
+        avg_time_sec = round(p['avg_time'] or 0.0, 1)
+        page_visits_chart.append({
+            'page': path,
+            'visits': p['visits'],
+            'unique_visitors': p['unique_visitors'],
+            'avg_time': f"{avg_time_sec}s",
+            'bounce_rate': f"{bounce_rate}%"
+        })
+
+    # ------------------------------------------------------------------
+    # 6. MENU ANALYTICS
+    # ------------------------------------------------------------------
+    menu_views_count = ev_qs.filter(event_type=AnalyticsEvent.EV_MENU_VISIT).count()
+    menu_uniques = ev_qs.filter(event_type=AnalyticsEvent.EV_MENU_VISIT).values('session_id').distinct().count()
+    menu_avg_time = ev_qs.filter(event_type=AnalyticsEvent.EV_MENU_VISIT).aggregate(a=Avg('time_on_page'))['a'] or 0.0
+    categories_opened = ev_qs.filter(event_type=AnalyticsEvent.EV_CATEGORY_CLICK).count()
+    items_viewed = ev_qs.filter(event_type=AnalyticsEvent.EV_FOOD_VIEW).count()
+    item_clicks = ev_qs.filter(event_type=AnalyticsEvent.EV_FOOD_CLICK).count()
+    menu_add_to_carts = ev_qs.filter(event_type=AnalyticsEvent.EV_ADD_TO_CART).count()
+
     menu_analytics = {
-        'total_visits': max_menu_visits,
-        'unique_visitors': capped_funnel[3],
-        'avg_time': f"{avg_session_time_global}s",
-        'categories_opened': cats_opened,
+        'total_visits': menu_views_count,
+        'unique_visitors': menu_uniques,
+        'avg_time': f"{round(menu_avg_time, 1)}s",
+        'categories_opened': categories_opened,
         'items_viewed': items_viewed,
-        'item_clicks': items_clicked
+        'item_clicks': item_clicks,
+        'add_to_cart': menu_add_to_carts
     }
 
-    # 8. Food Items & Heatmap (Views >= Clicks >= Adds >= Orders)
-    food_aggregates = filter_by_period(AnalyticsEvent.objects.filter(food__isnull=False), 'created_at', period, True).values('food__name').annotate(
-        views=Count('id', filter=Q(event_type='FOOD_VIEW')),
-        clicks=Count('id', filter=Q(event_type='FOOD_CLICK')),
-        adds=Count('id', filter=Q(event_type='ADD_CART')),
-        orders=Count('id', filter=Q(event_type='ORDER'))
-    ).order_by('-views')[:10]
-    
+    # ------------------------------------------------------------------
+    # 7. FOOD ANALYTICS
+    # ------------------------------------------------------------------
+    food_views = dict(ev_qs.filter(event_type=AnalyticsEvent.EV_FOOD_VIEW).values('food_id').annotate(c=Count('id')).values_list('food_id', 'c'))
+    food_clicks = dict(ev_qs.filter(event_type=AnalyticsEvent.EV_FOOD_CLICK).values('food_id').annotate(c=Count('id')).values_list('food_id', 'c'))
+    food_adds = dict(ev_qs.filter(event_type=AnalyticsEvent.EV_ADD_TO_CART).values('food_id').annotate(c=Count('id')).values_list('food_id', 'c'))
+
+    food_orders_qs = (
+        OrderItem.objects
+        .filter(order__created_at__gte=current_start, order__status='Completed')
+        .values('food_id')
+        .annotate(
+            orders_count=Count('order_id', distinct=True),
+            total_rev=Sum('price')
+        )
+    )
+    food_orders = {f['food_id']: f['orders_count'] for f in food_orders_qs}
+    food_rev = {f['food_id']: float(f['total_rev'] or 0) for f in food_orders_qs}
+
+    all_foods = Food.objects.all()
     food_item_table = []
-    food_item_heatmap = []
-    top_viewed_foods = []
-    for f in food_aggregates:
-        name = f['food__name']
-        orders = f['orders']
-        adds = max(f['adds'], orders)
-        clicks = max(f['clicks'], adds)
-        views = max(f['views'], clicks)
-        
-        food_item_table.append({'food__name': name, 'views': views, 'clicks': clicks, 'adds': adds, 'orders': orders})
-        food_item_heatmap.append({'name': name, 'clicks': clicks, 'change': 12.5})
-        top_viewed_foods.append({'food__name': name, 'count': views})
+    for f in all_foods:
+        views = food_views.get(f.id, 0)
+        clicks = food_clicks.get(f.id, 0)
+        adds = food_adds.get(f.id, 0)
+        orders = food_orders.get(f.id, 0)
+        rev = food_rev.get(f.id, 0.0)
 
-    # 9. Category Analytics
-    cat_stats = filter_by_period(AnalyticsEvent.objects.filter(event_type='FOOD_VIEW', category__isnull=False), 'created_at', period, True).values('category__name').annotate(visits=Count('id')).order_by('-visits')[:6]
-    cat_aggregates = []
-    for c in cat_stats:
-        cat_orders = filter_by_period(AnalyticsEvent.objects.filter(event_type='ORDER', category__name=c['category__name']), 'created_at', period, True).count()
-        cat_aggregates.append({'name': c['category__name'], 'visits': c['visits'] + cat_orders})
-        
-    total_cat_visits = sum([c['visits'] for c in cat_aggregates]) or 1
-    category_analytics = [{'name': c['name'], 'visits': c['visits'], 'percentage': round(c['visits']/total_cat_visits*100, 1)} for c in cat_aggregates]
+        # Enforce rule: views >= clicks >= adds >= orders
+        # If any data anomaly, force them to align logically
+        clicks = min(clicks, views)
+        adds = min(adds, clicks)
+        orders = min(orders, adds)
 
-    # 10. Trend Data & Timeline
-    timeline = []
-    orders_trend = []
-    sales_trend = []
-    searches_trend = []
+        conversion = pct(orders, views) if views > 0 else 0.0
+
+        food_item_table.append({
+            'food__name': f.name,
+            'views': views,
+            'clicks': clicks,
+            'adds': adds,
+            'orders': orders,
+            'revenue': rev,
+            'conversion': f"{conversion}%"
+        })
+
+    # Sort most clicked foods
+    food_item_table = sorted(food_item_table, key=lambda x: x['clicks'], reverse=True)
     
-    if period == 'yearly':
-        for i in range(4, -1, -1):
-            y = today.year - i
-            date_str = str(y)
-            visits = AnalyticsEvent.objects.filter(event_type='VISIT', created_at__year=y).count()
-            date_orders = Order.objects.filter(created_at__year=y)
-            date_sales = date_orders.filter(status='Completed').aggregate(Sum('total_amount'))['total_amount__sum'] or 0
-            searches_count = AnalyticsEvent.objects.filter(event_type='SEARCH', created_at__year=y).count()
-            
-            timeline.append({'date': date_str, 'visits': visits})
-            orders_trend.append({'date': date_str, 'count': date_orders.count()})
-            sales_trend.append({'date': date_str, 'sales': float(date_sales)})
-            searches_trend.append({'date': date_str, 'count': searches_count})
-    elif period == 'monthly':
-        for i in range(11, -1, -1):
-            d = today.replace(day=1) - timedelta(days=i*30)
-            y, m = d.year, d.month
-            date_str = calendar.month_abbr[m] + f" {y}"
-            visits = AnalyticsEvent.objects.filter(event_type='VISIT', created_at__year=y, created_at__month=m).count()
-            date_orders = Order.objects.filter(created_at__year=y, created_at__month=m)
-            date_sales = date_orders.filter(status='Completed').aggregate(Sum('total_amount'))['total_amount__sum'] or 0
-            searches_count = AnalyticsEvent.objects.filter(event_type='SEARCH', created_at__year=y, created_at__month=m).count()
-            
-            timeline.append({'date': date_str, 'visits': visits})
-            orders_trend.append({'date': date_str, 'count': date_orders.count()})
-            sales_trend.append({'date': date_str, 'sales': float(date_sales)})
-            searches_trend.append({'date': date_str, 'count': searches_count})
-    elif period == 'weekly':
-        for i in range(4, -1, -1):
-            week_start = current_start - timedelta(days=i*7)
-            week_end = week_start + timedelta(days=6)
-            date_str = f"{week_start.strftime('%b %d')} - {week_end.strftime('%d')}"
-            visits = AnalyticsEvent.objects.filter(event_type='VISIT', created_at__date__gte=week_start, created_at__date__lte=week_end).count()
-            date_orders = Order.objects.filter(created_at__date__gte=week_start, created_at__date__lte=week_end)
-            date_sales = date_orders.filter(status='Completed').aggregate(Sum('total_amount'))['total_amount__sum'] or 0
-            searches_count = AnalyticsEvent.objects.filter(event_type='SEARCH', created_at__date__gte=week_start, created_at__date__lte=week_end).count()
-            
-            timeline.append({'date': date_str, 'visits': visits})
-            orders_trend.append({'date': date_str, 'count': date_orders.count()})
-            sales_trend.append({'date': date_str, 'sales': float(date_sales)})
-            searches_trend.append({'date': date_str, 'count': searches_count})
-    else:
-        for i in range(6, -1, -1):
-            date = today - timedelta(days=i)
-            date_str = date.strftime('%Y-%m-%d')
-            visits = AnalyticsEvent.objects.filter(event_type='VISIT', created_at__date=date).count()
-            date_orders = Order.objects.filter(created_at__date=date)
-            date_sales = date_orders.filter(status='Completed').aggregate(Sum('total_amount'))['total_amount__sum'] or 0
-            searches_count = AnalyticsEvent.objects.filter(event_type='SEARCH', created_at__date=date).count()
-            
-            timeline.append({'date': date_str, 'visits': visits})
-            orders_trend.append({'date': date_str, 'count': date_orders.count()})
-            sales_trend.append({'date': date_str, 'sales': float(date_sales)})
-            searches_trend.append({'date': date_str, 'count': searches_count})
+    # Food heatmap: top 10 clicked
+    food_item_heatmap = [
+        {'name': f['food__name'], 'clicks': f['clicks'], 'change': 0}
+        for f in food_item_table[:10]
+        if f['clicks'] > 0
+    ]
 
-    # 11. Miscellaneous
-    peak_orders = current_orders_qs.annotate(hour=ExtractHour('created_at'), weekday=ExtractWeekDay('created_at')).values('hour', 'weekday').annotate(count=Count('id'))
-    peak_hours_matrix = []
-    for d in range(1, 8):
-        day_data = []
-        for h in range(0, 24):
-            match = next((x for x in peak_orders if x['hour'] == h and x['weekday'] == d), None)
-            day_data.append(match['count'] if match else 0)
-        peak_hours_matrix.append({'day': d, 'hours': day_data})
+    # ------------------------------------------------------------------
+    # 8. CATEGORY ANALYTICS
+    # ------------------------------------------------------------------
+    cat_visits = dict(ev_qs.filter(event_type=AnalyticsEvent.EV_CATEGORY_CLICK).values('category_id').annotate(c=Count('id')).values_list('category_id', 'c'))
+    cat_orders_qs = (
+        OrderItem.objects
+        .filter(order__created_at__gte=current_start, order__status='Completed')
+        .values('food__category_id')
+        .annotate(c=Count('order_id', distinct=True))
+    )
+    cat_orders = {c['food__category_id']: c['c'] for c in cat_orders_qs}
 
-    device_stats = filter_by_period(AnalyticsEvent.objects.all(), 'created_at', period, True).values('device_type').annotate(count=Count('id'))
-    total_devices = sum([d['count'] for d in device_stats]) or 1
-    top_devices = [{'name': d['device_type'] or 'Unknown', 'count': d['count'], 'percentage': round(d['count']/total_devices*100, 1)} for d in device_stats]
+    all_cats = Category.objects.all()
+    category_analytics = []
+    for c in all_cats:
+        category_analytics.append({
+            'name': c.name,
+            'visits': cat_visits.get(c.id, 0),
+            'orders': cat_orders.get(c.id, 0)
+        })
 
-    recent_orders = list(current_orders_qs.order_by('-created_at')[:5].values('id', 'total_amount', 'status', 'created_at'))
+    # ------------------------------------------------------------------
+    # 9. SEARCH ANALYTICS
+    # ------------------------------------------------------------------
+    search_events = ev_qs.filter(event_type=AnalyticsEvent.EV_SEARCH)
+    total_searches = search_events.count()
+    
+    # Top keywords
+    top_searches_qs = (
+        search_events
+        .values('search_term')
+        .annotate(c=Count('id'))
+        .order_by('-c')[:10]
+    )
+    top_searches = [{'search_keyword': s['search_term'], 'count': s['c']} for s in top_searches_qs if s['search_term']]
 
-    # Return compiled payload
+    successful_searches = 0
+    no_result_searches = 0
+    search_conversions = 0
+
+    for s in search_events:
+        has_results = s.extra.get('resultCount', 0) > 0
+        if has_results:
+            successful_searches += 1
+            # Check if this session converted (added to cart or ordered) in the same session later
+            converted = AnalyticsEvent.objects.filter(
+                session=s.session,
+                event_type=AnalyticsEvent.EV_ADD_TO_CART,
+                created_at__gt=s.created_at
+            ).exists()
+            if converted:
+                search_conversions += 1
+        else:
+            no_result_searches += 1
+
+    searches = {
+        'total': total_searches,
+        'successful': successful_searches,
+        'no_result': no_result_searches,
+        'conversion': pct(search_conversions, total_searches) if total_searches > 0 else 0.0
+    }
+
+    # ------------------------------------------------------------------
+    # 10. REVENUE & ORDER TRENDS (Last N elements based on period)
+    # ------------------------------------------------------------------
+    trend_qs = (
+        current_orders_qs
+        .annotate(date=TruncDate('created_at'))
+        .values('date')
+        .annotate(count=Count('id'))
+        .order_by('date')
+    )
+    orders_trend = [
+        {'date': d['date'].strftime('%Y-%m-%d'), 'count': d['count']}
+        for d in trend_qs if d['date']
+    ]
+
+    # Peak hours matrix (7 days x 24 hours)
+    peak_qs = (
+        current_orders_qs
+        .annotate(day=ExtractWeekDay('created_at'), hour=ExtractHour('created_at'))
+        .values('day', 'hour')
+        .annotate(count=Count('id'))
+    )
+    matrix = {d: [0] * 24 for d in range(1, 8)}
+    for p in peak_qs:
+        if p['day']:
+            matrix[p['day']][p['hour']] = p['count']
+    peak_hours_matrix = [{'day': k, 'hours': v} for k, v in matrix.items()]
+
+    # ------------------------------------------------------------------
+    # 11. DEVICE ANALYTICS
+    # ------------------------------------------------------------------
+    device_qs = (
+        AnalyticsSession.objects
+        .filter(started_at__gte=current_start)
+        .values('device_type')
+        .annotate(count=Count('id'))
+    )
+    top_devices = [{'device': d['device_type'].capitalize(), 'count': d['count']} for d in device_qs]
+
     return {
-        'users': {'total': total_users, 'today': today_users, 'active': active_users, 'returning': returning_users},
+        'period': period,
+        'users': {
+            'total': total_users,
+            'today': new_users,
+            'returning': returning_users,
+        },
         'orders': {
-            'total': total_orders, 'today': today_orders, 'revenue': float(revenue), 'avg_order_value': avg_order_val,
-            'completed': completed_orders, 'processing': 0, 'pending': pending_orders, 'cancelled': cancelled_orders
+            'total': total_orders,
+            'completed': completed_orders,
+            'revenue': float(revenue),
+            'cancelled': cancelled_orders,
+            'pending': pending_orders,
+            'processing': processing_orders,
         },
-        'catalog': {'foods': filter_by_period(Food.objects.all(), 'created_at', period, True).count(), 
-                    'categories': filter_by_period(Category.objects.all(), 'created_at', period, True).count()},
-        'visits': {'total': total_visits, 'today': today_visits},
-        'searches': {
-            'total': total_searches, 'successful': successful_searches, 'no_result': no_result_searches, 
-            'conversion': conversion, 'top_keyword': top_search_keyword, 'top_category': 'N/A'
-        },
-        'session_analytics': {'avg_session_time_seconds': avg_session_time_global},
-        'top_searches': top_searches,
-        'top_viewed_foods': top_viewed_foods,
-        'timeline': timeline,
-        'new_users_trend': [], # Ignored per frontend requirements
-        'orders_trend': orders_trend,
-        'searches_trend': searches_trend,
-        'sales_trend': sales_trend,
-        'recent_orders': recent_orders,
+        'visitors': visitors,
         'funnel_data': funnel_data,
         'page_visits_chart': page_visits_chart,
         'menu_analytics': menu_analytics,
         'food_item_table': food_item_table,
         'food_item_heatmap': food_item_heatmap,
         'category_analytics': category_analytics,
+        'searches': searches,
+        'top_searches': top_searches,
+        'orders_trend': orders_trend,
         'peak_hours_matrix': peak_hours_matrix,
-        'top_devices': top_devices
+        'top_devices': top_devices,
     }

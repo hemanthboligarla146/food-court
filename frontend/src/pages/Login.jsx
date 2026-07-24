@@ -3,8 +3,10 @@ import { useDispatch } from 'react-redux';
 import { useNavigate, Link } from 'react-router-dom';
 import api from '../api/axios';
 import { loginSuccess } from '../store/authSlice';
+import { mergeSessionWithUser, useTracker } from '../hooks/useTracker';
 
 const Login = () => {
+  const { trackEvent } = useTracker();
   const [formData, setFormData] = useState({ username: '', password: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -23,7 +25,11 @@ const Login = () => {
     
     try {
       const response = await api.post('users/login/', formData);
-      dispatch(loginSuccess({ user: response.data.user, token: response.data.access }));
+      const user = response.data.user;
+      const token = response.data.access;
+      dispatch(loginSuccess({ user, token }));
+      mergeSessionWithUser(token);
+      trackEvent('user_login');
       navigate('/');
     } catch (err) {
       setError(err.response?.data?.detail || 'Login failed. Please check your credentials.');

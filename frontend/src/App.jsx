@@ -16,10 +16,11 @@ import Profile from './pages/Profile'
 import Contact from './pages/Contact'
 import AdminDashboard from './pages/AdminDashboard'
 import AdminLogin from './pages/AdminLogin'
-import { useAnalytics } from './hooks/useAnalytics'
+import { usePageTracking } from './hooks/useTracker'
+
 
 function App() {
-  useAnalytics();
+  usePageTracking();
   const dispatch = useDispatch();
   const { token, user } = useSelector(state => state.auth);
 

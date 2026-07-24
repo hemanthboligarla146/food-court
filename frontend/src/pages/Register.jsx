@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import api from '../api/axios';
+import { useTracker } from '../hooks/useTracker';
 
 const Register = () => {
+  const { trackEvent } = useTracker();
   const [formData, setFormData] = useState({
     username: '', email: '', password: '', first_name: '', last_name: '', phone_number: '', address: ''
   });
@@ -39,6 +41,7 @@ const Register = () => {
           'Content-Type': 'multipart/form-data',
         }
       });
+      trackEvent('user_register');
       navigate('/login');
     } catch (err) {
       console.error(err);

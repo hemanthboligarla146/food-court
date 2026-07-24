@@ -4,15 +4,17 @@ import { useDispatch, useSelector } from 'react-redux';
 import api from '../api/axios';
 import { incrementCartCount } from '../store/cartSlice';
 import { FiSearch, FiFilter, FiShoppingCart, FiStar, FiChevronDown, FiHeart } from 'react-icons/fi';
+import { useTracker } from '../hooks/useTracker';
 
 const Menu = () => {
+  const { trackEvent } = useTracker();
   const [foods, setFoods] = useState([]);
   const [categories, setCategories] = useState([]);
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [loading, setLoading] = useState(true);
   const [wishlistItems, setWishlistItems] = useState([]);
-  const [priceRange, setPriceRange] = useState(50);
+  const [priceRange, setPriceRange] = useState(200);
   const [minRating, setMinRating] = useState(0);
   const [sortBy, setSortBy] = useState('');
   const { isAuthenticated } = useSelector((state) => state.auth || { isAuthenticated: false });
@@ -21,6 +23,7 @@ const Menu = () => {
 
   useEffect(() => {
     fetchCategories();
+    trackEvent('menu_visit');
     
     const queryParams = new URLSearchParams(location.search);
     const urlSearch = queryParams.get('search') || '';
@@ -69,11 +72,13 @@ const Menu = () => {
 
   const handleSearch = (e) => {
     e.preventDefault();
+    trackEvent('search', { searchTerm: search, extra: { resultCount: processedFoods.length } });
     fetchFoods(search, selectedCategory);
   };
 
   const handleCategoryFilter = (categoryId) => {
     setSelectedCategory(categoryId);
+    trackEvent('category_click', { categoryId });
     fetchFoods(search, categoryId);
   };
 
@@ -87,6 +92,7 @@ const Menu = () => {
         size: 'Medium'
       });
       dispatch(incrementCartCount(1));
+      trackEvent('add_to_cart', { foodId: food.id });
       alert(`${food.name} added to cart!`);
     } catch (error) {
       console.error('Error adding to cart:', error);
@@ -182,12 +188,12 @@ const Menu = () => {
               <div className="flex justify-between text-xs text-gray-600 mb-2">
                 <span>$0</span>
                 <span className="font-bold text-orange-600">${priceRange}</span>
-                <span>$50+</span>
+                <span>$200+</span>
               </div>
               <input 
                 type="range" 
                 className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-orange-500" 
-                min="0" max="50" 
+                min="0" max="200" 
                 value={priceRange} 
                 onChange={(e) => setPriceRange(e.target.value)} 
               />
@@ -293,7 +299,7 @@ const Menu = () => {
                 const inWishlist = wishlistItems.some(w => w.food === food.id);
                 
                 return (
-                  <Link to={`/menu/${food.id}`} key={food.id} className={`group bg-white border border-gray-100 rounded-2xl overflow-hidden hover:shadow-lg transition-all duration-300 flex flex-col ${!food.is_available ? 'opacity-70' : ''}`}>
+                  <Link to={`/menu/${food.id}`} key={food.id} onClick={() => trackEvent('food_click', { foodId: food.id })} className={`group bg-white border border-gray-100 rounded-2xl overflow-hidden hover:shadow-lg transition-all duration-300 flex flex-col ${!food.is_available ? 'opacity-70' : ''}`}>
                     <div className="h-44 bg-gray-100 relative overflow-hidden">
                       {imageUrl ? (
                         <img src={imageUrl} alt={food.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />

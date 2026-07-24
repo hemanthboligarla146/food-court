@@ -1,7 +1,9 @@
 from django.urls import path
-from .views import DashboardAnalyticsView, TrackEventView
+from .views import AnalyticsDashboardView, EventTrackView, SessionStartView, SessionMergeView
 
 urlpatterns = [
-    path('dashboard/', DashboardAnalyticsView.as_view(), name='dashboard_analytics'),
-    path('track/', TrackEventView.as_view(), name='track_analytics'),
+    path('dashboard/',      AnalyticsDashboardView.as_view(), name='analytics_dashboard'),
+    path('event/',          EventTrackView.as_view(),          name='analytics_event'),
+    path('session/start/',  SessionStartView.as_view(),        name='analytics_session_start'),
+    path('session/merge/',  SessionMergeView.as_view(),        name='analytics_session_merge'),
 ]

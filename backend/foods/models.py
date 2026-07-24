@@ -14,7 +14,7 @@ class Category(models.Model):
 class Food(models.Model):
     category = models.ForeignKey(Category, related_name='foods', on_delete=models.CASCADE)
     name = models.CharField(max_length=200)
-    description = models.TextField()
+    description = models.TextField(blank=True, null=True)
     price = models.DecimalField(max_digits=10, decimal_places=2)
     image = models.ImageField(upload_to='foods/', blank=True, null=True)
     is_available = models.BooleanField(default=True)

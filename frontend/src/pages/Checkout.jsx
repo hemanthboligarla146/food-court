@@ -4,8 +4,10 @@ import { FiArrowLeft } from 'react-icons/fi';
 import { useDispatch } from 'react-redux';
 import { setCartCount } from '../store/cartSlice';
 import api from '../api/axios';
+import { useTracker } from '../hooks/useTracker';
 
 const Checkout = () => {
+  const { trackEvent } = useTracker();
   const location = useLocation();
   const navigate = useNavigate();
   const dispatch = useDispatch();
@@ -22,6 +24,8 @@ const Checkout = () => {
   useEffect(() => {
     if (total === 0) {
       navigate('/cart');
+    } else {
+      trackEvent('checkout_start');
     }
   }, [total, navigate]);
 
@@ -34,8 +38,10 @@ const Checkout = () => {
     setLoading(true);
     setError('');
 
+    trackEvent('payment_attempt');
+
     try {
-      await api.post('orders/', {
+      const response = await api.post('orders/', {
         address: formData.address,
         payment_method: formData.payment_method,
         delivery_fee: deliveryFee,
@@ -43,11 +49,15 @@ const Checkout = () => {
       });
       // Clear global cart count
       dispatch(setCartCount(0));
+      
+      trackEvent('payment_success', { extra: { orderId: response.data.id, total } });
+      
       // Redirect to profile orders
       navigate('/profile');
     } catch (err) {
       console.error(err);
       setError('Failed to place order. Please try again.');
+      trackEvent('payment_failure', { extra: { reason: err.response?.data?.detail || err.message } });
     } finally {
       setLoading(false);
     }

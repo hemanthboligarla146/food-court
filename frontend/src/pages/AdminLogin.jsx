@@ -17,6 +17,9 @@ const AdminLogin = () => {
   const { user, isAuthenticated } = useSelector(state => state.auth);
 
   useEffect(() => {
+    // Purge any cached frontend analytics state (as requested)
+    sessionStorage.removeItem('analytics_session_id');
+    
     if (isAuthenticated && user?.is_staff) {
       navigate('/admin');
     }

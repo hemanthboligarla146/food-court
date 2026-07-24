@@ -2,7 +2,6 @@ from rest_framework import generics, permissions, status, viewsets
 from rest_framework.response import Response
 from .models import Order, OrderItem, Cart, Wishlist
 from .serializers import OrderSerializer, CartSerializer, WishlistSerializer, AdminOrderSerializer
-from analytics.services import track_event
 from foods.models import Review
 from rest_framework.views import APIView
 
@@ -18,13 +17,7 @@ class CartListCreateView(generics.ListCreateAPIView):
         # The size is automatically picked up from validated_data because it is in the serializer fields
         cart_item = serializer.save(user=self.request.user)
         
-        track_event(
-            user=self.request.user,
-            event_type='ADD_CART',
-            food=food,
-            category=food.category,
-            ip_address=self.request.META.get('REMOTE_ADDR')
-        )
+        # Track events in frontend
 
 class CartDeleteView(generics.DestroyAPIView):
     serializer_class = CartSerializer
@@ -37,13 +30,7 @@ class CartDeleteView(generics.DestroyAPIView):
         food = instance.food
         super().perform_destroy(instance)
         
-        track_event(
-            user=self.request.user,
-            event_type='REMOVE_CART',
-            food=food,
-            category=food.category if food else None,
-            ip_address=self.request.META.get('REMOTE_ADDR')
-        )
+        # Track events in frontend
 
 class OrderListCreateView(generics.ListCreateAPIView):
     serializer_class = OrderSerializer
@@ -85,11 +72,7 @@ class OrderListCreateView(generics.ListCreateAPIView):
         
         cart_items.delete()
         
-        track_event(
-            user=request.user,
-            event_type='ORDER',
-            ip_address=request.META.get('REMOTE_ADDR')
-        )
+        # Track events in frontend
         
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
@@ -163,13 +146,7 @@ class OrderReviewView(APIView):
             )
             if review:
                 reviews_created += 1
-                track_event(
-                    user=request.user,
-                    event_type='REVIEW',
-                    food=food,
-                    category=food.category,
-                    ip_address=request.META.get('REMOTE_ADDR')
-                )
+                # Track events in frontend
                 
         if reviews_created > 0:
             order.is_reviewed = True

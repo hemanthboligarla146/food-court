@@ -3,7 +3,6 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from .serializers import UserSerializer, UserRegistrationSerializer, AddressSerializer, PaymentMethodSerializer
-from analytics.services import track_event
 from django.contrib.auth import get_user_model
 from .models import Address, PaymentMethod
 
@@ -16,13 +15,6 @@ class RegisterView(APIView):
         serializer = UserRegistrationSerializer(data=request.data)
         if serializer.is_valid():
             user = serializer.save()
-            
-            # Log registration analytics
-            track_event(
-                user=user,
-                event_type='REGISTER',
-                ip_address=request.META.get('REMOTE_ADDR')
-            )
             
             refresh = RefreshToken.for_user(user)
             return Response({
@@ -56,11 +48,6 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             user = User.objects.get(username=request.data['username'])
             from .serializers import UserSerializer
             response.data['user'] = UserSerializer(user).data
-            track_event(
-                user=user,
-                event_type='LOGIN',
-                ip_address=request.META.get('REMOTE_ADDR')
-            )
         return response
 
 class AddressViewSet(viewsets.ModelViewSet):
