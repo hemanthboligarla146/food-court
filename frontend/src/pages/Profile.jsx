@@ -4,8 +4,10 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api/axios';
 import { logout } from '../store/authSlice';
 import { FiLogOut, FiSettings, FiUser, FiHeart, FiMapPin, FiCreditCard, FiPackage, FiPlus, FiTrash2, FiEdit2, FiCheckCircle, FiStar, FiX } from 'react-icons/fi';
+import { useTracker } from '../hooks/useTracker';
 
 const Profile = () => {
+  const { trackEvent } = useTracker();
   const { user, token } = useSelector(state => state.auth);
   const dispatch = useDispatch();
   const navigate = useNavigate();
@@ -94,6 +96,7 @@ const Profile = () => {
   };
 
   const handleLogout = () => {
+    trackEvent('user_logout');
     dispatch(logout());
     navigate('/');
   };
