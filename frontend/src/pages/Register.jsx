@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { useSelector } from 'react-redux';
 import api from '../api/axios';
 import { useTracker } from '../hooks/useTracker';
 
 const Register = () => {
   const { trackEvent } = useTracker();
+  const { isAuthenticated } = useSelector((state) => state.auth || { isAuthenticated: false });
   const [formData, setFormData] = useState({
     username: '', email: '', password: '', first_name: '', last_name: '', phone_number: '', address: ''
   });
@@ -12,6 +14,12 @@ const Register = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      navigate('/');
+    }
+  }, [isAuthenticated, navigate]);
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });

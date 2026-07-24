@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useDispatch } from 'react-redux';
+import { useState, useEffect } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate, Link } from 'react-router-dom';
 import api from '../api/axios';
 import { loginSuccess } from '../store/authSlice';
@@ -7,12 +7,19 @@ import { mergeSessionWithUser, useTracker } from '../hooks/useTracker';
 
 const Login = () => {
   const { trackEvent } = useTracker();
+  const { isAuthenticated } = useSelector((state) => state.auth || { isAuthenticated: false });
   const [formData, setFormData] = useState({ username: '', password: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   
   const dispatch = useDispatch();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      navigate('/');
+    }
+  }, [isAuthenticated, navigate]);
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
