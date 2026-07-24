@@ -95,8 +95,8 @@ const Profile = () => {
     }
   };
 
-  const handleLogout = () => {
-    trackEvent('user_logout');
+  const handleLogout = async () => {
+    await trackEvent('user_logout');
     dispatch(logout());
     navigate('/');
   };

@@ -126,7 +126,7 @@ export const useTracker = () => {
     const token = localStorage.getItem('token');
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-    axios.post(`${API_URL}/analytics/event/`, payload, { headers })
+    return axios.post(`${API_URL}/analytics/event/`, payload, { headers })
       .catch(() => {});
   };
 
