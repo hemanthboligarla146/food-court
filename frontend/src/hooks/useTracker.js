@@ -35,7 +35,7 @@ export const usePageTracking = () => {
   const location = useLocation();
   const user = useSelector(state => state.auth?.user);
   const entryTimeRef = useRef(Date.now());
-  const currentPageRef = useRef(location.pathname);
+  const lastTrackedPathRef = useRef(null);
 
   // Core helper to record an event
   const recordEvent = (eventType, pagePath, timeSpent = null) => {
@@ -59,7 +59,6 @@ export const usePageTracking = () => {
 
     // Use beacon if page is unloading, else regular axios post
     if (eventType === 'page_view' && timeSpent !== null) {
-      // Beacon is more reliable on unload/navigation
       const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
       navigator.sendBeacon(`${API_URL}/analytics/event/`, blob);
     } else {
@@ -69,27 +68,25 @@ export const usePageTracking = () => {
   };
 
   useEffect(() => {
-    const sessionKey = getOrCreateSessionKey();
-
-    // 1. Record start of new page view
     const currentPath = location.pathname;
-    recordEvent('page_view', currentPath);
 
-    // Update refs for tracking exit time
-    entryTimeRef.current = Date.now();
-    currentPageRef.current = currentPath;
+    // Only record page_view if path actually changed to prevent duplicate logs on state/auth updates
+    if (lastTrackedPathRef.current !== currentPath) {
+      recordEvent('page_view', currentPath);
+      lastTrackedPathRef.current = currentPath;
+      entryTimeRef.current = Date.now();
+    }
 
-    // 2. On unmount/navigation away, calculate time spent and log it
+    // On unmount/navigation away, calculate time spent and log it
     return () => {
       const exitTime = Date.now();
       const timeSpentSeconds = Math.round((exitTime - entryTimeRef.current) / 1000);
       
-      // Only log time spent if it is > 0 seconds
-      if (timeSpentSeconds > 0) {
-        recordEvent('page_view', currentPageRef.current, timeSpentSeconds);
+      if (timeSpentSeconds > 0 && lastTrackedPathRef.current === currentPath) {
+        recordEvent('page_view', currentPath, timeSpentSeconds);
       }
     };
-  }, [location, user]);
+  }, [location.pathname]); // Only depend on pathname!
 
   // Handle page closing/unload to capture final page duration
   useEffect(() => {

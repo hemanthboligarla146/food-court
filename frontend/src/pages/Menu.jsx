@@ -23,7 +23,6 @@ const Menu = () => {
 
   useEffect(() => {
     fetchCategories();
-    trackEvent('menu_visit');
     
     const queryParams = new URLSearchParams(location.search);
     const urlSearch = queryParams.get('search') || '';
