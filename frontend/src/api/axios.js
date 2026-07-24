@@ -20,6 +20,7 @@ api.interceptors.response.use(
     if (error.response && error.response.status === 401) {
       // If we get a 401, the token is invalid or expired. Clear it.
       localStorage.removeItem('token');
+      sessionStorage.removeItem('analytics_session_key');
       // Redirect the user to login so they can get a new token
       window.location.href = '/login';
     }

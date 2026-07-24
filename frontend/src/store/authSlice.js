@@ -19,6 +19,7 @@ const authSlice = createSlice({
       state.token = null;
       state.isAuthenticated = false;
       localStorage.removeItem('token');
+      sessionStorage.removeItem('analytics_session_key');
     },
     setUser: (state, action) => {
       state.user = action.payload;
