@@ -121,6 +121,7 @@ def record_event(session_key, event_type, user=None, page_path='', food_id=None,
     # Record event
     event = AnalyticsEvent.objects.create(
         session=session,
+        user=user,
         event_type=event_type,
         page_path=page_path[:255] if page_path else '',
         food=food,

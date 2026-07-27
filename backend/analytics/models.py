@@ -100,6 +100,12 @@ class AnalyticsEvent(models.Model):
         on_delete=models.CASCADE,
         related_name='events'
     )
+    user        = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='analytics_events'
+    )
     event_type  = models.CharField(max_length=40, choices=EVENT_CHOICES, db_index=True)
     page_path   = models.CharField(max_length=255, blank=True, db_index=True)
     food        = models.ForeignKey(

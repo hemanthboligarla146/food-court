@@ -12,7 +12,12 @@ class AnalyticsSessionAdmin(admin.ModelAdmin):
 
 @admin.register(AnalyticsEvent)
 class AnalyticsEventAdmin(admin.ModelAdmin):
-    list_display = ('event_type', 'page_path', 'session', 'food', 'created_at')
+    list_display = ('event_type', 'page_path', 'event_user', 'session', 'food', 'created_at')
     list_filter  = ('event_type', 'created_at')
-    search_fields = ('page_path', 'search_term', 'session__session_key')
+    search_fields = ('page_path', 'search_term', 'session__session_key', 'user__username')
     readonly_fields = ('created_at',)
+
+    def event_user(self, obj):
+        return obj.user.username if obj.user else 'anon'
+    event_user.short_description = 'User'
+
