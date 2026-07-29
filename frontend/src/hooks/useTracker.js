@@ -4,7 +4,8 @@ import { useSelector } from 'react-redux';
 import axios from 'axios';
 import posthog from 'posthog-js';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+const rawApiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+const API_URL = rawApiUrl.endsWith('/') ? rawApiUrl.slice(0, -1) : rawApiUrl;
 
 // Generate a random UUID-like key for anonymous session tracking
 export const getOrCreateSessionKey = () => {
