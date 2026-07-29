@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import axios from 'axios';
+import posthog from 'posthog-js';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
 
@@ -12,6 +13,9 @@ export const getOrCreateSessionKey = () => {
     sessionKey = 'sess_' + Math.random().toString(36).substring(2, 15) + '_' + Date.now().toString(36);
     sessionStorage.setItem('analytics_session_key', sessionKey);
     
+    // Identify in PostHog
+    posthog.identify(sessionKey);
+    
     // Start session on backend
     axios.post(`${API_URL}/analytics/session/start/`, { session_key: sessionKey })
       .catch(err => console.error('Failed to start session:', err));
@@ -20,9 +24,13 @@ export const getOrCreateSessionKey = () => {
 };
 
 // Merge anonymous session with logged-in user
-export const mergeSessionWithUser = (token) => {
+export const mergeSessionWithUser = (token, username) => {
   const sessionKey = sessionStorage.getItem('analytics_session_key');
   if (sessionKey && token) {
+    if (username) {
+      posthog.identify(username);
+      posthog.alias(username, sessionKey);
+    }
     axios.post(
       `${API_URL}/analytics/session/merge/`, 
       { session_key: sessionKey },
@@ -53,6 +61,9 @@ export const usePageTracking = () => {
       page_path: pagePath,
       time_on_page: timeSpent
     };
+
+    // Forward to PostHog
+    posthog.capture(eventType, payload);
 
     const token = localStorage.getItem('token');
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
@@ -94,13 +105,13 @@ export const usePageTracking = () => {
       const exitTime = Date.now();
       const timeSpentSeconds = Math.round((exitTime - entryTimeRef.current) / 1000);
       if (timeSpentSeconds > 0) {
-        recordEvent('page_view', currentPageRef.current, timeSpentSeconds);
+        recordEvent('page_view', location.pathname, timeSpentSeconds);
       }
     };
 
     window.addEventListener('beforeunload', handleUnload);
     return () => window.removeEventListener('beforeunload', handleUnload);
-  }, []);
+  }, [location.pathname]);
 };
 
 export const useTracker = () => {
@@ -122,6 +133,9 @@ export const useTracker = () => {
       search_term: data.searchTerm || '',
       extra: data.extra || {}
     };
+
+    // Forward to PostHog
+    posthog.capture(eventType, payload);
 
     const token = localStorage.getItem('token');
     const headers = token ? { Authorization: `Bearer ${token}` } : {};

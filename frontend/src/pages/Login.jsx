@@ -35,7 +35,7 @@ const Login = () => {
       const user = response.data.user;
       const token = response.data.access;
       dispatch(loginSuccess({ user, token }));
-      mergeSessionWithUser(token);
+      mergeSessionWithUser(token, user.username);
       trackEvent('user_login');
       navigate('/');
     } catch (err) {
