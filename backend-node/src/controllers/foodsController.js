@@ -130,9 +130,191 @@ async function createReview(req, res, next) {
   }
 }
 
+async function adminListCategories(req, res, next) {
+  return listCategories(req, res, next);
+}
+
+async function adminCreateCategory(req, res, next) {
+  try {
+    const { name, description } = req.body;
+    if (!name) {
+      return res.status(400).json({ detail: 'Name is required.' });
+    }
+    const cat = await prisma.foods_category.create({
+      data: {
+        name,
+        description: description || '',
+        created_at: new Date()
+      }
+    });
+    res.status(201).json({
+      id: Number(cat.id),
+      name: cat.name,
+      description: cat.description || '',
+      image: null,
+      created_at: cat.created_at
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function adminUpdateCategory(req, res, next) {
+  try {
+    const { id } = req.params;
+    const { name, description } = req.body;
+    const cat = await prisma.foods_category.update({
+      where: { id: BigInt(id) },
+      data: {
+        name,
+        description: description || ''
+      }
+    });
+    res.status(200).json({
+      id: Number(cat.id),
+      name: cat.name,
+      description: cat.description || '',
+      image: cat.image ? `/media/${cat.image}` : null,
+      created_at: cat.created_at
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function adminDeleteCategory(req, res, next) {
+  try {
+    const { id } = req.params;
+    await prisma.foods_category.delete({
+      where: { id: BigInt(id) }
+    });
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function adminListFoods(req, res, next) {
+  try {
+    const foods = await prisma.foods_food.findMany({
+      orderBy: { id: 'asc' },
+      include: {
+        foods_category: true,
+        foods_review: {
+          include: {
+            users_user: true
+          }
+        }
+      }
+    });
+    res.status(200).json(foods.map(formatFood));
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function adminCreateFood(req, res, next) {
+  try {
+    const { name, description, price, category, is_available, is_featured, is_trending } = req.body;
+    if (!name || !price || !category) {
+      return res.status(400).json({ detail: 'Name, price, and category are required.' });
+    }
+
+    let image = null;
+    if (req.file) {
+      image = `foods/${req.file.filename}`;
+    }
+
+    const food = await prisma.foods_food.create({
+      data: {
+        name,
+        description: description || '',
+        price: parseFloat(price),
+        category_id: BigInt(category),
+        is_available: is_available === 'true' || is_available === true,
+        is_featured: is_featured === 'true' || is_featured === true,
+        is_trending: is_trending === 'true' || is_trending === true,
+        has_3d_model: false,
+        image,
+        created_at: new Date()
+      },
+      include: {
+        foods_category: true,
+        foods_review: {
+          include: {
+            users_user: true
+          }
+        }
+      }
+    });
+
+    res.status(201).json(formatFood(food));
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function adminUpdateFood(req, res, next) {
+  try {
+    const { id } = req.params;
+    const { name, description, price, category, is_available, is_featured, is_trending } = req.body;
+
+    const data = {
+      name,
+      description: description || '',
+      price: parseFloat(price),
+      category_id: BigInt(category),
+      is_available: is_available === 'true' || is_available === true,
+      is_featured: is_featured === 'true' || is_featured === true,
+      is_trending: is_trending === 'true' || is_trending === true
+    };
+
+    if (req.file) {
+      data.image = `foods/${req.file.filename}`;
+    }
+
+    const food = await prisma.foods_food.update({
+      where: { id: BigInt(id) },
+      data,
+      include: {
+        foods_category: true,
+        foods_review: {
+          include: {
+            users_user: true
+          }
+        }
+      }
+    });
+
+    res.status(200).json(formatFood(food));
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function adminDeleteFood(req, res, next) {
+  try {
+    const { id } = req.params;
+    await prisma.foods_food.delete({
+      where: { id: BigInt(id) }
+    });
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   listCategories,
   listFoods,
   getFoodDetail,
-  createReview
+  createReview,
+  adminListCategories,
+  adminCreateCategory,
+  adminUpdateCategory,
+  adminDeleteCategory,
+  adminListFoods,
+  adminCreateFood,
+  adminUpdateFood,
+  adminDeleteFood
 };
