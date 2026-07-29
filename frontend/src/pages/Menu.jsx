@@ -38,7 +38,8 @@ const Menu = () => {
   const fetchCategories = async () => {
     try {
       const response = await api.get('foods/categories/');
-      setCategories(response.data.results || response.data);
+      const data = response.data?.results || response.data;
+      setCategories(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Error fetching categories:', error);
     }
@@ -52,7 +53,8 @@ const Menu = () => {
       if (category) url += `category=${category}&`;
       
       const response = await api.get(url);
-      setFoods(response.data.results || response.data);
+      const data = response.data?.results || response.data;
+      setFoods(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Error fetching foods:', error);
     } finally {
@@ -63,7 +65,8 @@ const Menu = () => {
   const fetchWishlist = async () => {
     try {
       const response = await api.get('orders/wishlist/');
-      setWishlistItems(response.data.results || response.data);
+      const data = response.data?.results || response.data;
+      setWishlistItems(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Error fetching wishlist:', error);
     }

@@ -17,11 +17,13 @@ const Home = () => {
     const fetchData = async () => {
       try {
         const catRes = await api.get('foods/categories/');
-        setCategories(catRes.data.results?.slice(0, 6) || catRes.data?.slice(0, 6) || []);
+        const catData = catRes.data?.results || catRes.data;
+        setCategories(Array.isArray(catData) ? catData.slice(0, 6) : []);
         
         // Fetch featured or just some random foods for best sellers
         const foodRes = await api.get('foods/menu/');
-        setBestSellers(foodRes.data.results?.slice(0, 4) || foodRes.data?.slice(0, 4) || []);
+        const foodData = foodRes.data?.results || foodRes.data;
+        setBestSellers(Array.isArray(foodData) ? foodData.slice(0, 4) : []);
         
         if (isAuthenticated) {
           const wlRes = await api.get('orders/wishlist/');
