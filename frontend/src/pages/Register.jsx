@@ -53,7 +53,7 @@ const Register = () => {
       navigate('/login');
     } catch (err) {
       console.error(err);
-      setError('Registration failed. Please check your inputs or try a different username/email.');
+      setError(err.response?.data?.detail || 'Registration failed. Please check your inputs or try a different username/email.');
     } finally {
       setLoading(false);
     }
